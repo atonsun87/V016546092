@@ -6,6 +6,61 @@ Format: `[vX.Y.Z — Title] (date)` followed by categorised changes.
 
 ---
 
+## v0.4.0 — Trust Layer + Observability (2026-03-11)
+
+### New Modules
+
+- **`core/memory/provenance.py`** — Memory provenance and audit trail:
+  - `MemorySource` (StrEnum) — six origin categories: `user`, `llm`,
+    `onboarding`, `agent`, `system`, `import`
+  - `EditRecord` — immutable record of a single field edit (field, author,
+    previous value, timestamp)
+  - `ProvenanceRecord` — full provenance for a node: source, author,
+    session_id, pipeline_stage, and ordered edit history
+  - `ProvenanceStore` — async SQLite-backed persistence with `save`,
+    `get`, `append_edit`, `list_for_user`, `count_by_source`, `delete`
+
+- **`core/memory/trust.py`** — User control over stored memories:
+  - `MemoryTrustService.edit_node_text` / `edit_node_name` — update node
+    content with a full audit trail written to `ProvenanceStore`
+  - `MemoryTrustService.soft_delete_node` — reversible deletion (sets
+    `is_deleted = 1`, node excluded from normal queries, provenance kept)
+  - `MemoryTrustService.hard_delete_node` — permanent deletion, cascades
+    to edges and provenance record
+  - `MemoryTrustService.export_user_data` — portable `MemoryExport`
+    (JSON) containing all nodes, edges, and provenance for a user
+  - `MemoryTrustService.get_memory_provenance` — inspect origin of any
+    node with ownership enforcement
+
+- **`core/observability/metrics.py`** — Lightweight in-process metrics:
+  - `MetricsCollector` — thread-safe singleton with counters, latency
+    ring-buffers (500-sample, p50/p95), and float gauges
+  - `MetricsCollector.timed(name)` — context manager for latency capture
+  - `SystemSnapshot.to_dict()` — JSON-serialisable health snapshot
+  - `MetricsCollector.reset_instance()` — test isolation helper
+
+- **`core/observability/__init__.py`** — New `core.observability` package
+
+### Documentation
+
+- **`STABILIZATION.md`** — Comprehensive stabilization plan with 8 priority
+  areas: trust layer, observability, retrieval quality evaluation, schema/
+  migration hardening, error boundaries, pipeline wiring, goal continuity,
+  and product surface hardening
+
+### Tests
+
+- `tests/test_memory_provenance.py` — 11 tests for `ProvenanceStore`
+  (save/get, overwrite, edit history accumulation, list/filter, count by
+  source, delete, all MemorySource values)
+- `tests/test_memory_trust.py` — 13 tests for `MemoryTrustService`
+  (edit text/name, soft/hard delete, export, provenance inspection,
+  wrong-user rejection, cascade edge deletion)
+- `tests/test_observability_metrics.py` — 18 tests for `MetricsCollector`
+  (counters, latencies, gauges, snapshot, timed, singleton, thread safety)
+
+---
+
 ## v0.3.0 — Stage 3 Stabilization (2026-03-04)
 
 ### New Modules
