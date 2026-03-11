@@ -36,7 +36,11 @@ from core.retrieval.scoring import RetrievalScorer
 
 
 def _ts(offset_days: int = 0) -> str:
-    """Return an ISO-8601 UTC timestamp offset by *offset_days* from now."""
+    """Return an ISO-8601 UTC timestamp *offset_days* days in the past.
+
+    ``offset_days=0`` returns the current UTC time; ``offset_days=30``
+    returns a timestamp 30 days ago.
+    """
     return (datetime.now(UTC) - timedelta(days=offset_days)).isoformat()
 
 

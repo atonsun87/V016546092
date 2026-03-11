@@ -138,8 +138,9 @@ def test_event_store_scoped_by_user_id(tmp_path):
         events_a = await store.list_events("user-a")
         events_b = await store.list_events("user-b")
 
-        assert all(e["payload"].get("user_id") == "user-a" for e in events_a)
-        assert all(e["payload"].get("user_id") == "user-b" for e in events_b)
+        # user_id is a top-level field in every event dict returned by EventStore
+        assert all(e["user_id"] == "user-a" for e in events_a)
+        assert all(e["user_id"] == "user-b" for e in events_b)
 
     asyncio.run(scenario())
 

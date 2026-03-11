@@ -93,6 +93,9 @@ class MessageProcessor:
         self.calibrator = calibrator
         self.background_mode = background_mode
         self.provenance_store = provenance_store
+        # Use the shared singleton by default so production metrics are always
+        # collected.  Tests that need isolation should pass an explicit
+        # ``MetricsCollector()`` instance to avoid cross-test contamination.
         self._metrics = metrics or MetricsCollector.get_instance()
         effective_llm = llm_client or MockLLMClient()
         effective_bus = event_bus or EventBus()
