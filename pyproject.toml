@@ -25,6 +25,9 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "eval: retrieval quality evaluation scenarios (run with -m eval)",
+]
 
 [tool.ruff]
 target-version = "py311"
