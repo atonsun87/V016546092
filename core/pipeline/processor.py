@@ -30,8 +30,11 @@ from core.insights.engine import InsightEngine
 from core.journal.storage import JournalStorage
 from core.llm.embedding_service import EmbeddingService
 from core.llm_client import LLMClient, MockLLMClient
+from core.memory.provenance import ProvenanceStore
 from core.mood.tracker import MoodTracker
+from core.observability.metrics import MetricsCollector
 from core.parts.memory import PartsMemory
+from core.pipeline.event_store import EventStore
 from core.pipeline.events import EventBus
 from core.pipeline.stage_observe import ObserveStage
 from core.pipeline.stage_orient import OrientStage
@@ -80,12 +83,20 @@ class MessageProcessor:
         background_mode: bool = False,
         neuro_bridge: "NeuroBridge | None" = None,
         orchestrator: "AgentOrchestrator | None" = None,
+        event_store: EventStore | None = None,
+        provenance_store: ProvenanceStore | None = None,
+        metrics: MetricsCollector | None = None,
     ) -> None:
         self.graph_api = graph_api
         self.journal = journal
         self.session_memory = session_memory
         self.calibrator = calibrator
         self.background_mode = background_mode
+        self.provenance_store = provenance_store
+        # Use the shared singleton by default so production metrics are always
+        # collected.  Tests that need isolation should pass an explicit
+        # ``MetricsCollector()`` instance to avoid cross-test contamination.
+        self._metrics = metrics or MetricsCollector.get_instance()
         effective_llm = llm_client or MockLLMClient()
         effective_bus = event_bus or EventBus()
 
@@ -117,6 +128,7 @@ class MessageProcessor:
             journal=journal,
             session_memory=session_memory,
             event_bus=effective_bus,
+            event_store=event_store,
         )
         self._orient = OrientStage(
             graph_api=graph_api,
@@ -143,6 +155,24 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     async def process_message(
+        self,
+        user_id: str,
+        text: str,
+        *,
+        source: str = "cli",
+        timestamp: str | None = None,
+    ) -> ProcessResult:
+        with self._metrics.timed("pipeline_ms"):
+            result = await self._process_message_inner(
+                user_id=user_id,
+                text=text,
+                source=source,
+                timestamp=timestamp,
+            )
+        self._metrics.increment("messages_processed")
+        return result
+
+    async def _process_message_inner(
         self,
         user_id: str,
         text: str,
@@ -237,6 +267,8 @@ class MessageProcessor:
             retrieved_context=ori.retrieved_context,
             policy=dec.policy,
         )
+
+        self._metrics.set_gauge("node_count", float(len(ori.created_nodes)))
 
         return ProcessResult(
             intent=ori.intent,

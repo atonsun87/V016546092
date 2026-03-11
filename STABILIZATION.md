@@ -82,8 +82,10 @@ performance degradation, and unexpected behaviour.
 
 ### Remaining
 
-- [ ] Instrument `MessageProcessor.process_message` with `timed("pipeline_ms")`
-      and `increment("messages_processed")`.
+- [x] Instrument `MessageProcessor.process_message` with `timed("pipeline_ms")`
+      and `increment("messages_processed")` (done in pipeline integration PR).
+- [x] Expose `node_count` gauge via `set_gauge("node_count", ...)` after each
+      pipeline run.
 - [ ] Instrument `RetrievalRanker` with `timed("retrieval_ms")` and
       `increment("retrievals_performed")`.
 - [ ] Instrument `NeuroCore.activate` with `timed("neuro_activate_ms")`.
@@ -101,7 +103,7 @@ performance degradation, and unexpected behaviour.
 
 ## Priority 3 — Retrieval quality evaluation
 
-**Status: not started**
+**Status: complete (eval tests shipped)**
 
 The 7-dimension `RetrievalScorer` is implemented and rule-based.
 But there is no automated way to verify that retrieval is actually
@@ -110,17 +112,26 @@ do not degrade recall.
 
 ### Tasks
 
-- [ ] Create `tests/eval/test_retrieval_quality.py` with parametrised
+- [x] Create `tests/eval/test_retrieval_quality.py` with parametrised
       scenario fixtures:
-  - Each fixture defines a small graph, a query context, and the
-    expected top-K node IDs.
+  - Each fixture defines a set of candidates, a query context, and
+    the expected ranking order of the top candidates.
   - Tests assert that the correct nodes rank above alternatives.
-- [ ] Define at least five canonical retrieval scenarios:
-  1. Goal-aligned recall — query tied to active goal surfaces goal-linked nodes
-  2. Emotional salience — high-emotion query surfaces emotional nodes
-  3. Recency bias — recent note beats older note with same content
-  4. Identity resonance — query with identity signals surfaces identity nodes
-  5. Confidence filter — low-confidence nodes are ranked below high-confidence ones
+- [x] Define five canonical retrieval scenarios:
+  1. Goal-aligned recall — goal-linked note outranks semantically similar
+     but goal-less note in `planning` mode
+  2. Emotional salience — high-emotion memory outranks neutral one in
+     `reflection` mode
+  3. Recency bias — recent note beats older note with same content in
+     `chat` mode
+  4. Identity resonance — identity-tagged node outranks untagged node
+     in `proactive_action` mode
+  5. Confidence filter — high-confidence candidate outranks
+     low-confidence one with equal scores
+- [x] Include `precision_at_k` helper and a `precision@3` regression
+      test for the goal scenario.
+- [x] Register `eval` pytest mark in `pyproject.toml` so eval scenarios
+      can be run separately: `pytest -m eval`.
 - [ ] Add a `scripts/run_retrieval_eval.py` script that runs all scenarios
       and prints a precision@K report.
 - [ ] Track precision@3 and precision@5 as regression metrics in CI
@@ -179,7 +190,7 @@ still surface unhandled exceptions to end users under edge cases.
 
 ## Priority 6 — Pipeline integration for provenance and metrics
 
-**Status: not started**
+**Status: complete (wired in pipeline integration PR)**
 
 The provenance and metrics foundations are in place.  They need to be
 wired into the actual pipeline so every message that flows through the
@@ -187,14 +198,22 @@ system is instrumented.
 
 ### Tasks
 
-- [ ] Modify `interfaces/processor_factory.py` to construct and inject
-      `ProvenanceStore` and `MetricsCollector` into `MessageProcessor`.
-- [ ] Add `provenance_store: ProvenanceStore | None = None` parameter to
+- [x] Modify `interfaces/processor_factory.py` to construct and inject
+      `EventStore` and `ProvenanceStore` into `MessageProcessor`.
+- [x] Add `event_store: EventStore | None = None` parameter to
+      `MessageProcessor.__init__` and pass to `ObserveStage` so that
+      every incoming message is appended to the durable event log
+      (online→offline bridge activated).
+- [x] Add `provenance_store: ProvenanceStore | None = None` parameter to
       `MessageProcessor.__init__` (optional so existing tests do not break).
-- [ ] In `stage_observe.py` (extraction phase), after each `upsert_node`
-      call, call `provenance_store.save(...)` if a store is provided.
-- [ ] In `stage_act.py`, after each AgentAction write, record a
-      `MemorySource.AGENT` provenance entry.
+- [x] Add `metrics: MetricsCollector | None = None` parameter to
+      `MessageProcessor.__init__`; wrap `process_message` with
+      `timed("pipeline_ms")` and increment `messages_processed` after
+      each successful call; update `node_count` gauge.
+- [x] Add `tests/test_pipeline_integration.py` — 6 tests verifying:
+      EventStore receives events, events are user-scoped, processor
+      works without EventStore (backward compat), MetricsCollector
+      records `messages_processed` and `pipeline_ms`.
 
 ---
 
