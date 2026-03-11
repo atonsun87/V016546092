@@ -22,6 +22,26 @@ The layers are ordered from foundational to user-facing:
 └──────────────────────────────────────────────────────┘
 ```
 
+### Online / Offline Processing Split
+
+SELF-OS enforces a hard architectural boundary between two processing regimes:
+
+```
+ONLINE PATH (latency-critical, runs per message)
+  User input → ObserveStage → EventRecord written → fast reply returned
+  Rules: sanitise, classify intent, capture raw signals, NO belief mutation
+
+OFFLINE PATH (async, background, no latency pressure)
+  EventRecord queue → OfflineConsolidationPipeline
+    → belief_update_pass → consolidation_pass → abstraction_pass
+  Rules: all deep processing, LLM calls for abstraction, belief confidence updates
+```
+
+This split is inspired by the hippocampal (fast, online) vs neocortical (slow, offline)
+division in biological memory systems.  See
+[docs/neuro-inspired-architecture.md](neuro-inspired-architecture.md) for a complete
+engineering explanation of this principle and its implications for the roadmap.
+
 ---
 
 ## Layer Definitions
@@ -61,7 +81,12 @@ persisted in SQLite and optionally Neo4j. Vector embeddings support semantic sea
 **Key modules**:
 - `core/graph/storage.py` — SQLite-backed graph persistence
 - `core/graph/api.py` — high-level graph query interface
-- `core/memory/` — memory lifecycle (consolidation, abstraction, forgetting)
+- `core/memory/consolidator.py` — memory lifecycle (consolidation, abstraction, forgetting)
+- `core/memory/reconsolidation.py` — contradiction detection and belief revision
+- `core/memory/event_record.py` — typed append-only event records (online→offline handoff)
+- `core/offline/pipeline.py` — `OfflineConsolidationPipeline` (the explicit offline path)
+- `core/beliefs/` — `BeliefRecord` + `BeliefStore` (confidence-weighted, revisable beliefs)
+- `core/retrieval/view.py` — `MemoryView` + `MemoryViewPolicy` (scoped memory access)
 - `core/rag/` — retrieval-augmented generation
 - `core/search/` — hybrid vector + keyword search
 - `core/journal/` — raw message archival (event sourcing)
@@ -171,13 +196,18 @@ routing, and response delivery.
 ```
 User message
   → Interface Layer (receive, parse)
-  → Pipeline: ObserveStage (extract emotion, classify message)
-  → Pipeline: OrientStage (build context from graph + psyche state)
-  → Pipeline: DecideStage (select tools, build prompt)
-  → Pipeline: ActStage (call LLM, execute tools, store results)
-  → Graph write (new nodes, updated relationships)
-  → Journal write (raw event)
-  → Memory consolidation (background)
+  → Pipeline: ObserveStage (sanitise, classify intent, capture raw signals)
+  → EventRecord written (append-only, online→offline handoff)
+  → Fast reply generated using existing graph context (background_mode=True)
+
+  [Background / Offline]
+  → Pipeline: OrientStage (LLM extraction, graph persist, embed, search)
+  → Pipeline: DecideStage (policy, mood, parts, neuro)
+  → Pipeline: ActStage (tool execution, graph write)
+  → OfflineConsolidationPipeline.process_pending_events()
+     → belief_update_pass (confidence adjustments)
+     → consolidation_pass (NOTE → BELIEF clustering)
+     → abstraction_pass (BELIEF → archetype)
 ```
 
 ### State Flow
@@ -201,11 +231,13 @@ Query (user message / planning context / reflection context)
   → RAGRetriever (hybrid vector + keyword search)
   → RetrievalScorer (7-dimensional: semantic, goal, identity, emotional, recency, confidence, relationship)
   → RetrievalRanker (filter by confidence, sort, cap by limit)
+  → MemoryViewBuilder.build(candidates, scored, policy)  ← scope enforcement
+  → MemoryView (read-only, scoped, auditable)
   → Prompt injection
 ```
 
-See [docs/retrieval-strategy.md](retrieval-strategy.md) and
-[docs/retrieval-architecture.md](retrieval-architecture.md) for full retrieval design.
+Agents and interfaces consume `MemoryView` objects, never raw graph node lists.
+See [docs/neuro-inspired-architecture.md](neuro-inspired-architecture.md) §6 for details.
 
 ### Proactive Agent Flow
 
@@ -259,6 +291,14 @@ Periodic trigger (scheduler)
    every action taken by the agent, including what triggered it, what it did, and what
    the outcome was.
 
+7. **Online path never mutates beliefs.** Only the offline consolidation pipeline
+   (`OfflineConsolidationPipeline`) may update `BeliefRecord` confidence or create new
+   beliefs.  The online path appends `EventRecord` objects and returns.
+
+8. **Agents consume MemoryView, not raw nodes.** All retrieval results are wrapped in a
+   `MemoryView` with an explicit `MemoryViewPolicy` before being injected into prompts or
+   passed to agents.  This enforces scope, confidence filtering, and auditability.
+
 ---
 
 ## Module Reference
@@ -266,7 +306,12 @@ Periodic trigger (scheduler)
 | Module | Layer | Purpose |
 |---|---|---|
 | `core/graph/` | Memory Core | Knowledge graph storage and retrieval |
-| `core/memory/` | Memory Core | Memory lifecycle (consolidation, forgetting) |
+| `core/memory/consolidator.py` | Memory Core | Memory lifecycle (consolidation, forgetting) |
+| `core/memory/reconsolidation.py` | Memory Core | Contradiction detection, belief revision |
+| `core/memory/event_record.py` | Memory Core | Typed append-only events (online→offline contract) |
+| `core/offline/pipeline.py` | Memory Core | Offline consolidation pipeline |
+| `core/beliefs/` | Memory Core | Confidence-weighted revisable belief store |
+| `core/retrieval/view.py` | Memory Core | Scoped memory view (MemoryView, MemoryViewPolicy) |
 | `core/journal/` | Memory Core | Raw event sourcing |
 | `core/rag/` | Memory Core | Retrieval-augmented generation |
 | `core/search/` | Memory Core | Hybrid vector + keyword search |
@@ -275,7 +320,8 @@ Periodic trigger (scheduler)
 | `core/therapy/` | Emotional Core | Intervention selection (CBT/ACT/IFS) |
 | `core/identity/` | Identity Core | IdentityProfile + IdentityProfileBuilder |
 | `core/onboarding/` | Bootstrapping Layer | OnboardingPlanner + gap-driven interviews |
-| `core/retrieval/` | Memory Core | Identity-aware retrieval scoring and ranking |
+| `core/retrieval/scoring.py` | Memory Core | Identity-aware 7-dimensional scoring |
+| `core/retrieval/ranker.py` | Memory Core | Confidence-filtered ranking |
 | `core/psyche/` | Identity Core | PsycheState (unified snapshot) |
 | `core/parts/` | Identity Core | IFS parts memory |
 | `core/goals/` | Identity Core | Goal engine |
@@ -291,4 +337,4 @@ Periodic trigger (scheduler)
 | `core/scheduler/` | Agent Core | Background job scheduling |
 | `interfaces/` | Interface Layer | Telegram bot and API adapters |
 
-See also: [docs/domain-model.md](domain-model.md) | [docs/retrieval-strategy.md](retrieval-strategy.md)
+See also: [docs/domain-model.md](domain-model.md) | [docs/retrieval-strategy.md](retrieval-strategy.md) | [docs/neuro-inspired-architecture.md](neuro-inspired-architecture.md)
