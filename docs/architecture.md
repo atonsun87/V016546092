@@ -19,6 +19,9 @@ The layers are ordered from foundational to user-facing:
 │                    Memory Core                       │
 ├──────────────────────────────────────────────────────┤
 │         Bootstrapping / Identity Acquisition         │
+├──────────────────────────────────────────────────────┤
+│            Memory Kernel (core/kernel/)              │
+│  RawSignal · DerivedBelief · BeliefStore · Scope     │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -45,6 +48,31 @@ See [docs/onboarding-and-identity-bootstrap.md](onboarding-and-identity-bootstra
 - `core/graph/` — storage and retrieval of all identity nodes
 - `core/parts/` — IFS parts memory (subpersonalities, values, needs)
 - `core/psyche/` — PsycheState builder
+
+---
+
+### Memory Kernel
+
+**Responsibility**: Define the primitive contracts that prevent architectural drift as
+the system grows.  Four problems that recur in memory systems are addressed here:
+
+1. **Signal/belief separation** — raw events (`RawSignal`) are immutable; derived
+   conclusions (`DerivedBelief`) are revisable with full provenance.
+2. **Reconsolidation** — beliefs can be revised in place via `DerivedBelief.revise()`
+   / `BeliefStore.revise()`, with the prior state appended to `revision_history`.
+3. **Policy-aware retrieval** — agents receive a `MemoryScope` (a permission-constrained
+   read view) rather than direct access to `GraphStorage`.
+4. **Domain boundaries** — typed stores (`BeliefStore`) are the only sanctioned path for
+   belief writes, ensuring provenance is always tracked.
+
+**Neurobiological inspiration**: sensory vs semantic memory, hippocampal reconsolidation,
+prefrontal gating of retrieval, local plasticity within domain boundaries.
+See [docs/neuro_kernel.md](neuro_kernel.md) for full design rationale.
+
+**Key modules**:
+- `core/kernel/signal.py` — `RawSignal` (frozen dataclass) and `DerivedBelief`
+- `core/kernel/belief_store.py` — `BeliefStore` (graph-backed persistence + revision)
+- `core/kernel/memory_scope.py` — `MemoryScope` (policy-aware scoped read view)
 
 ---
 
@@ -259,6 +287,14 @@ Periodic trigger (scheduler)
    every action taken by the agent, including what triggered it, what it did, and what
    the outcome was.
 
+7. **Agents receive `MemoryScope`, not raw storage.** All read access from agent code
+   goes through a `MemoryScope` configured with the minimum required `allowed_types`.
+   This prevents agents from silently accessing memory they were not designed to use.
+
+8. **Belief writes go through `BeliefStore`.** Agent and pipeline code must not call
+   `GraphStorage.upsert_node` directly for BELIEF nodes.  Using `BeliefStore` ensures
+   provenance (`source_signal_ids`, `revision_history`) is always recorded.
+
 ---
 
 ## Module Reference
@@ -270,6 +306,7 @@ Periodic trigger (scheduler)
 | `core/journal/` | Memory Core | Raw event sourcing |
 | `core/rag/` | Memory Core | Retrieval-augmented generation |
 | `core/search/` | Memory Core | Hybrid vector + keyword search |
+| `core/kernel/` | Memory Kernel | RawSignal, DerivedBelief, BeliefStore, MemoryScope |
 | `core/mood/` | Emotional Core | VAD mood tracking |
 | `core/analytics/` | Emotional Core | Cognitive distortion detection, graph analytics |
 | `core/therapy/` | Emotional Core | Intervention selection (CBT/ACT/IFS) |
@@ -291,4 +328,4 @@ Periodic trigger (scheduler)
 | `core/scheduler/` | Agent Core | Background job scheduling |
 | `interfaces/` | Interface Layer | Telegram bot and API adapters |
 
-See also: [docs/domain-model.md](domain-model.md) | [docs/retrieval-strategy.md](retrieval-strategy.md)
+See also: [docs/domain-model.md](domain-model.md) | [docs/retrieval-strategy.md](retrieval-strategy.md) | [docs/neuro_kernel.md](neuro_kernel.md)
