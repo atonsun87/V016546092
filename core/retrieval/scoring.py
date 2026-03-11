@@ -7,6 +7,22 @@ strings for strong signals.
 
 The scorer is intentionally rule-based and fully deterministic in v0 so that
 its behaviour is easy to reason about, test, and evolve.
+
+Policy-aware weights
+--------------------
+Different retrieval contexts emphasise different memory dimensions.  The
+``query_type`` field of :class:`~core.retrieval.models.RetrievalQueryContext`
+selects a weight preset that is **blended** with the caller's custom weights
+(if any):
+
+* ``"chat"`` — balanced; semantic and confidence lead.
+* ``"planning"`` — goals dominate; recency is still important.
+* ``"proactive_action"`` — goal + identity alignment; emotional signal matters.
+* ``"reflection"`` — identity and emotional salience lead; recency is reduced.
+* ``"goal_review"`` — goal relevance is highest; identity and recency follow.
+
+Callers may still pass explicit ``weights`` to the constructor to override
+any preset on a per-instance basis.
 """
 
 from __future__ import annotations
@@ -36,6 +52,64 @@ DEFAULT_WEIGHTS: Final[dict[str, float]] = {
     "relationship_score": 0.05,
 }
 
+# ---------------------------------------------------------------------------
+# Query-type weight presets (policy-aware retrieval)
+# ---------------------------------------------------------------------------
+# Each preset must contain all seven dimension keys and sum to 1.0.
+
+QUERY_TYPE_WEIGHTS: Final[dict[str, dict[str, float]]] = {
+    # Balanced conversational retrieval — semantic quality and confidence lead.
+    "chat": {
+        "semantic_relevance": 0.35,
+        "goal_relevance": 0.15,
+        "identity_relevance": 0.10,
+        "emotional_salience": 0.10,
+        "recency_score": 0.15,
+        "confidence_score": 0.10,
+        "relationship_score": 0.05,
+    },
+    # Planning retrieval — goals dominate, recency still matters.
+    "planning": {
+        "semantic_relevance": 0.20,
+        "goal_relevance": 0.35,
+        "identity_relevance": 0.10,
+        "emotional_salience": 0.05,
+        "recency_score": 0.15,
+        "confidence_score": 0.10,
+        "relationship_score": 0.05,
+    },
+    # Proactive action — goal + identity alignment, emotional signal matters.
+    "proactive_action": {
+        "semantic_relevance": 0.20,
+        "goal_relevance": 0.25,
+        "identity_relevance": 0.20,
+        "emotional_salience": 0.15,
+        "recency_score": 0.10,
+        "confidence_score": 0.05,
+        "relationship_score": 0.05,
+    },
+    # Reflection — identity and emotional salience lead; recency is reduced.
+    "reflection": {
+        "semantic_relevance": 0.20,
+        "goal_relevance": 0.10,
+        "identity_relevance": 0.25,
+        "emotional_salience": 0.25,
+        "recency_score": 0.05,
+        "confidence_score": 0.10,
+        "relationship_score": 0.05,
+    },
+    # Goal review — goal relevance highest; identity and recency follow.
+    "goal_review": {
+        "semantic_relevance": 0.15,
+        "goal_relevance": 0.40,
+        "identity_relevance": 0.15,
+        "emotional_salience": 0.05,
+        "recency_score": 0.15,
+        "confidence_score": 0.05,
+        "relationship_score": 0.05,
+    },
+}
+
 # Threshold above which a dimension is considered a "strong signal" worth
 # including in the explanation.
 _EXPLANATION_THRESHOLD: Final[float] = 0.6
@@ -62,18 +136,26 @@ class RetrievalScorer:
     weights:
         Optional override for the dimension weights dict.  If supplied it must
         contain all seven dimension keys and the values should sum to 1.0.
-        Missing keys fall back to ``DEFAULT_WEIGHTS``.
+        Missing keys fall back to ``DEFAULT_WEIGHTS``.  These instance-level
+        weights are applied *on top of* any query-type preset selected at
+        :meth:`score` time.
     """
 
     def __init__(self, weights: dict[str, float] | None = None) -> None:
-        if weights is not None:
-            self._weights = {**DEFAULT_WEIGHTS, **weights}
-        else:
-            self._weights = dict(DEFAULT_WEIGHTS)
+        # Instance-level overrides (may be empty)
+        self._override_weights: dict[str, float] = dict(weights) if weights else {}
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _effective_weights(self, query_type: str) -> dict[str, float]:
+        """Return the effective weight dict for *query_type*.
+
+        Priority: instance-level overrides > query-type preset > DEFAULT_WEIGHTS.
+        """
+        preset = QUERY_TYPE_WEIGHTS.get(query_type, DEFAULT_WEIGHTS)
+        return {**DEFAULT_WEIGHTS, **preset, **self._override_weights}
 
     def score(
         self,
@@ -83,7 +165,9 @@ class RetrievalScorer:
         """Score *candidate* against *context* and return a full breakdown.
 
         Each dimension is computed independently, then combined via a weighted
-        sum that is clamped to ``[0, 1]``.  Explanation strings are added for
+        sum that is clamped to ``[0, 1]``.  The weights are selected based on
+        ``context.query_type`` (policy-aware retrieval) and then merged with
+        any instance-level override weights.  Explanation strings are added for
         any dimension whose score exceeds ``_EXPLANATION_THRESHOLD``.
         """
         semantic = self._semantic_relevance(candidate)
@@ -94,7 +178,7 @@ class RetrievalScorer:
         confidence = self._confidence_score(candidate)
         relationship = self._relationship_score(candidate)
 
-        w = self._weights
+        w = self._effective_weights(context.query_type)
         final = _clamp(
             semantic * w["semantic_relevance"]
             + goal * w["goal_relevance"]
