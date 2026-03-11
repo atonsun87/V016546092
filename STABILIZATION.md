@@ -43,13 +43,12 @@ understand or control.
 
 ### Remaining
 
-- [ ] Wire `ProvenanceStore` into `MessageProcessor` so every node created
-      via the OODA pipeline is automatically stamped with source, author,
-      and pipeline stage.
 - [ ] Wire `ProvenanceStore` into `OnboardingPlanner` so onboarding-derived
       nodes are tagged `MemorySource.ONBOARDING`.
 - [ ] Wire `ProvenanceStore` into agent tool writes (`memory_tools.py`,
       `task_tool.py`) so agent-created nodes are tagged `MemorySource.AGENT`.
+- [ ] In `stage_orient.py`, pass `provenance_store` from `MessageProcessor`
+      and stamp each `upsert_node` call with `MemorySource.LLM` provenance.
 - [ ] Expose trust operations via the Telegram interface:
   - `/memory list` — show recent memories
   - `/memory edit <id>` — edit a memory
@@ -64,7 +63,7 @@ understand or control.
 
 ## Priority 2 — Observability
 
-**Status: foundation shipped (v0.4.0)**
+**Status: foundation shipped (v0.4.0); pipeline instrumentation shipped**
 
 You cannot stabilize what you cannot measure. The observability layer
 must record what the system is doing so you can detect regressions,
@@ -79,6 +78,9 @@ performance degradation, and unexpected behaviour.
   - Float gauges (`active_users`, `node_count`)
   - `timed()` context manager for zero-boilerplate latency capture
   - `snapshot().to_dict()` for export / logging
+- [x] `MetricsCollector` injected into `MessageProcessor` via `processor_factory.py`.
+- [x] `process_message` increments `messages_processed` and times `pipeline_ms`
+      for every call.
 
 ### Remaining
 
@@ -179,20 +181,28 @@ still surface unhandled exceptions to end users under edge cases.
 
 ## Priority 6 — Pipeline integration for provenance and metrics
 
-**Status: not started**
+**Status: partially shipped**
 
 The provenance and metrics foundations are in place.  They need to be
 wired into the actual pipeline so every message that flows through the
 system is instrumented.
 
-### Tasks
+### Completed
 
-- [ ] Modify `interfaces/processor_factory.py` to construct and inject
-      `ProvenanceStore` and `MetricsCollector` into `MessageProcessor`.
-- [ ] Add `provenance_store: ProvenanceStore | None = None` parameter to
-      `MessageProcessor.__init__` (optional so existing tests do not break).
-- [ ] In `stage_observe.py` (extraction phase), after each `upsert_node`
-      call, call `provenance_store.save(...)` if a store is provided.
+- [x] `interfaces/processor_factory.py` constructs and injects
+      `ProvenanceStore`, `MetricsCollector`, and `EventStore` into
+      `MessageProcessor`.
+- [x] `MessageProcessor.__init__` accepts optional `provenance_store`,
+      `metrics`, and `event_store` parameters (existing tests unaffected).
+- [x] `MessageProcessor.process_message` records `messages_processed` and
+      `pipeline_ms` latency via `MetricsCollector`.
+- [x] `ObserveStage` receives `event_store` and appends every sanitised
+      message to the durable append-only log (online→offline boundary).
+
+### Remaining
+
+- [ ] In `stage_orient.py`, after each `upsert_node` call, call
+      `provenance_store.save(...)` (pass `provenance_store` from processor).
 - [ ] In `stage_act.py`, after each AgentAction write, record a
       `MemorySource.AGENT` provenance entry.
 
@@ -267,3 +277,14 @@ Tests added:
 | `tests/test_memory_provenance.py` | 11 tests for `ProvenanceStore` |
 | `tests/test_memory_trust.py` | 13 tests for `MemoryTrustService` |
 | `tests/test_observability_metrics.py` | 18 tests for `MetricsCollector` |
+
+---
+
+## Quick reference: architecture consolidation shipped
+
+| Artefact | Purpose |
+|---|---|
+| `ARCHITECTURE_PRINCIPLES.md` | Eight architectural invariants; allowed/prohibited dependency directions; online/offline split contract |
+| `core/contracts.py` | `Protocol` interfaces: `EventAppender`, `ConsolidationRunner`, `BeliefRevisor`, `RetrievalProvider`, `PolicyEnforcer` |
+| `interfaces/processor_factory.py` | Now injects `ProvenanceStore`, `MetricsCollector`, and `EventStore` into `MessageProcessor` |
+| `core/pipeline/processor.py` | Accepts `provenance_store`, `metrics`, `event_store`; instruments `process_message` with counter + latency timer; wires `event_store` into `ObserveStage` |

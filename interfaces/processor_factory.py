@@ -15,6 +15,9 @@ from core.graph.storage import GraphStorage
 from core.journal.storage import JournalStorage
 from core.llm.embedding_service import EmbeddingService
 from core.llm_client import OpenRouterQwenClient
+from core.memory.provenance import ProvenanceStore
+from core.observability.metrics import MetricsCollector
+from core.pipeline.event_store import EventStore
 from core.pipeline.processor import MessageProcessor
 from core.search.qdrant_storage import QdrantVectorStorage
 
@@ -58,6 +61,9 @@ def build_processor(db_path: str | None = None, *, background_mode: bool = True)
 
     session_memory = SessionMemory()
     calibrator = ThresholdCalibrator(graph_storage)
+    provenance_store = ProvenanceStore(db_path=resolved)
+    metrics = MetricsCollector.get_instance()
+    event_store = EventStore(db_path=resolved)
     return MessageProcessor(
         graph_api=graph_api,
         journal=journal_storage,
@@ -67,4 +73,7 @@ def build_processor(db_path: str | None = None, *, background_mode: bool = True)
         embedding_service=embedding_service,
         calibrator=calibrator,
         background_mode=background_mode,
+        provenance_store=provenance_store,
+        metrics=metrics,
+        event_store=event_store,
     )

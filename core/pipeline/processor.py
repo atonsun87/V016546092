@@ -15,6 +15,7 @@ Each stage is a self-contained class with an ``async def run()`` method.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
@@ -44,7 +45,10 @@ from core.tools.memory_tools import build_default_tools
 
 if TYPE_CHECKING:
     from core.analytics.calibrator import ThresholdCalibrator
+    from core.memory.provenance import ProvenanceStore
     from core.neuro.bridge import NeuroBridge
+    from core.observability.metrics import MetricsCollector
+    from core.pipeline.event_store import EventStore
     from core.pipeline.orchestrator import AgentOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -80,12 +84,17 @@ class MessageProcessor:
         background_mode: bool = False,
         neuro_bridge: "NeuroBridge | None" = None,
         orchestrator: "AgentOrchestrator | None" = None,
+        provenance_store: "ProvenanceStore | None" = None,
+        metrics: "MetricsCollector | None" = None,
+        event_store: "EventStore | None" = None,
     ) -> None:
         self.graph_api = graph_api
         self.journal = journal
         self.session_memory = session_memory
         self.calibrator = calibrator
         self.background_mode = background_mode
+        self._provenance_store = provenance_store
+        self._metrics = metrics
         effective_llm = llm_client or MockLLMClient()
         effective_bus = event_bus or EventBus()
 
@@ -117,6 +126,7 @@ class MessageProcessor:
             journal=journal,
             session_memory=session_memory,
             event_bus=effective_bus,
+            event_store=event_store,
         )
         self._orient = OrientStage(
             graph_api=graph_api,
@@ -158,8 +168,13 @@ class MessageProcessor:
                 logger.warning("ThresholdCalibrator.load failed: %s", exc)
             self._calibrator_loaded.add(user_id)
 
+        if self._metrics is not None:
+            self._metrics.increment("messages_processed")
+
         # 1. OBSERVE — sanitise, journal, session, classify
-        obs = await self._observe.run(user_id, text, source=source, timestamp=timestamp)
+        timer = self._metrics.timed("pipeline_ms") if self._metrics is not None else contextlib.nullcontext()
+        with timer:
+            obs = await self._observe.run(user_id, text, source=source, timestamp=timestamp)
 
         if self.background_mode:
             return await self._process_background(user_id, obs)
