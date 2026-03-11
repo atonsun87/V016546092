@@ -291,4 +291,4 @@ Periodic trigger (scheduler)
 | `core/scheduler/` | Agent Core | Background job scheduling |
 | `interfaces/` | Interface Layer | Telegram bot and API adapters |
 
-See also: [docs/domain-model.md](domain-model.md) | [docs/retrieval-strategy.md](retrieval-strategy.md)
+See also: [docs/domain-model.md](domain-model.md) | [docs/retrieval-strategy.md](retrieval-strategy.md) | [docs/NEURO_ARCH_MANIFEST.md](NEURO_ARCH_MANIFEST.md) | [docs/PARALLEL_PLAN.md](PARALLEL_PLAN.md)
