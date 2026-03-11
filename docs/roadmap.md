@@ -5,6 +5,14 @@ through to the protocol-ready public layer. Each phase builds on the previous on
 Phases are not strictly time-boxed — they represent logical milestones rather than
 calendar deadlines.
 
+> **Parallelization plan**: See [`docs/PARALLEL_PLAN.md`](PARALLEL_PLAN.md) for a
+> five-worker wave schedule mapping all open tasks to parallel tracks without
+> harmful overlap.
+>
+> **Architecture manifest**: See [`docs/NEURO_ARCH_MANIFEST.md`](NEURO_ARCH_MANIFEST.md)
+> for the neurobiologically-inspired memory system design — online/offline split,
+> four memory types, memory lifecycle, agent access policy, and forbidden patterns.
+
 ---
 
 ## Phase 1 — Documentation and Architecture Stabilisation ✅
@@ -192,6 +200,37 @@ external applications to query a user's identity and context with their consent.
 - [ ] Protocol specification — formal definition of the identity and memory query API
 
 **Dependencies**: Phase 7 (stable native workspace layer).
+
+---
+
+## Phase 9 — Neuro-Inspired Memory Architecture
+
+**Goal**: Implement the full neurobiologically-inspired memory system described in
+[`docs/NEURO_ARCH_MANIFEST.md`](NEURO_ARCH_MANIFEST.md). The key architectural
+shift is a hard online/offline boundary: the online path (OODA pipeline) captures
+events and reads pre-built memory views; all deep consolidation, belief updating,
+and salience recalculation happens in offline background jobs.
+
+**Deliverables**:
+- [ ] `SalienceEngine` — multi-component salience scoring (novelty, emotion,
+      goal relevance, repetition, unresolved tension, social weight)
+- [ ] `ConsolidationEngine` refactor — explicit online-capture vs offline-
+      consolidation boundary; episodic compression; belief extraction
+- [ ] `BeliefEngine` v1 — revisable beliefs with `confidence`, `decay_rate`,
+      `timescale` (fast/medium/slow), contradiction detection
+- [ ] `PolicyLayer` — agent access gating; `MemoryView` contract; tiered access
+      (private / agent / external)
+- [ ] `MemoryTrace` schema — unified `strength`, `confidence`, `state`,
+      `emotion_intensity`, `contradiction_score` fields on all memory objects
+- [ ] Offline pre-built `MemoryView` cache — online path reads cached views;
+      no live graph queries during reply generation
+
+**Dependencies**: Phase 4 (identity-aware retrieval), Phase 5 (goal continuity),
+Phase 6 (stable product surface).
+
+See [`docs/NEURO_ARCH_MANIFEST.md`](NEURO_ARCH_MANIFEST.md) for the full design
+specification, and [`docs/PARALLEL_PLAN.md`](PARALLEL_PLAN.md) Wave 4 for the
+worker assignments.
 
 ---
 
