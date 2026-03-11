@@ -261,6 +261,104 @@ Periodic trigger (scheduler)
 
 ---
 
+## Online / Offline Processing Boundary
+
+SELF-OS follows a neurobiologically inspired separation between **online** (real-time,
+hippocampal-style encoding) and **offline** (background, cortical-style consolidation).
+
+### Online Phase (OBSERVE → ACT)
+
+The online pipeline runs *synchronously in the request path* and must return a reply
+quickly.  Its responsibilities are deliberately narrow:
+
+| Responsibility | Module |
+|---|---|
+| Sanitise and validate raw user input | `ObserveStage._sanitize_text` |
+| Classify intent (fast, regex/keyword) | `core/pipeline/router.py` |
+| Write raw signal to append-only journal | `JournalStorage.append` |
+| Persist raw event to durable event log | `EventStore.append` |
+| Publish in-process event for synchronous handlers | `EventBus.publish` |
+| Generate immediate reply from *existing* context | `ActStage` |
+
+**What the online phase must NOT do:** run expensive LLM extraction, cluster memories,
+revise beliefs, or perform graph-wide analysis.  When `background_mode=True` these heavy
+operations are deferred to background `asyncio.Task`s so the user receives a reply in
+milliseconds.
+
+### Offline Phase (Background Consolidation)
+
+The offline pipeline runs *outside the request path*, on a schedule or triggered by
+accumulated signal volume.  It mirrors hippocampal sleep replay:
+
+| Responsibility | Module |
+|---|---|
+| LLM-based entity extraction from raw journal entries | `OrientStage` (background) |
+| Cluster similar NOTE nodes into BELIEF/THOUGHT | `MemoryConsolidator.consolidate` |
+| Summarise BELIEF clusters into higher-level archetypes | `MemoryConsolidator.abstract` |
+| Soft-delete stale edges and orphan nodes | `MemoryConsolidator.forget` |
+| Detect and flag belief contradictions | `ReconsolidationEngine.check_contradiction` |
+| Revise BELIEF nodes with contra-evidence | `ReconsolidationEngine.update_belief` |
+| Run spaced-repetition review scheduling | `MemoryScheduler` |
+| Proactively generate insights and outreach | `ProactiveScheduler` |
+
+### Event Store as the Bridge
+
+`EventStore` (`core/pipeline/event_store.py`) is the durable, append-only bridge
+between the two phases:
+
+```
+User message → ObserveStage → EventStore.append("journal.appended", …)
+                                       │
+                             (offline, later)
+                                       │
+                             OfflineConsolidator reads EventStore.get_oldest_unprocessed
+                             → OrientStage (LLM extraction) → GraphAPI.apply_changes
+                             → MemoryConsolidator.consolidate / .abstract / .forget
+```
+
+The event log is **never mutated after insertion** (append-only).  Offline processors
+track their own cursor / watermark to avoid reprocessing the same events.
+
+---
+
+## Agent Memory Access — Scoped Access Policy
+
+External agents (marketplace integrations, custom plugins) must not have unrestricted
+access to a user's memory graph.  Every agent is associated with an
+`AgentScope` (`core/agent/schema.py`) that declares:
+
+* **allowed_node_types** — set of node types the agent may read.
+* **allowed_domains** — optional allowlist of domain labels.
+* **min_confidence** — minimum confidence floor; speculative nodes are hidden.
+* **allow_emotional_content** — explicit opt-in to access EMOTION nodes.
+
+Regardless of scope, `PERSON`, `VALUE`, and `BELIEF` nodes are **always** off-limits
+to external agents.  These contain the most sensitive identity-level information.
+
+Agents call `AgentScope.check_access(node_type, domain, confidence)` before using any
+memory node and `AgentScope.filter_candidates(candidates)` to bulk-filter retrieval
+results.
+
+---
+
+## Policy-Aware Retrieval
+
+`RetrievalScorer` (`core/retrieval/scoring.py`) supports **query-type weight presets**
+that adjust dimension importance based on the retrieval context:
+
+| query_type | Dominant dimensions |
+|---|---|
+| `chat` | semantic_relevance, recency_score |
+| `planning` | goal_relevance, recency_score |
+| `proactive_action` | goal_relevance, identity_relevance, emotional_salience |
+| `reflection` | identity_relevance, emotional_salience |
+| `goal_review` | goal_relevance, identity_relevance |
+
+The preset is selected automatically from `RetrievalQueryContext.query_type` and merged
+with any instance-level weight overrides passed to the `RetrievalScorer` constructor.
+
+---
+
 ## Module Reference
 
 | Module | Layer | Purpose |
@@ -284,7 +382,8 @@ Periodic trigger (scheduler)
 | `core/motivation/` | Motivation Core | MotivationState schema, builder, and store |
 | `core/pipeline/` | Agent Core | OODA pipeline stages |
 | `core/tools/` | Agent Core | Tool registry and built-in tools |
-| `core/agent/` | Agent Core | AgentAction schema + persistence |
+| `core/pipeline/event_store.py` | Agent Core / Memory Core | Append-only durable event log (online→offline bridge) |
+| `core/agent/` | Agent Core | AgentAction schema + AgentScope access policy + persistence |
 | `agents/ifs/` | Agent Core | IFS InnerCouncil agents |
 | `core/context/` | Agent Core | Context builder |
 | `core/llm/` | Agent Core | LLM client abstraction |
